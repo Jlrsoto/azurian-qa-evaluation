@@ -37,7 +37,22 @@ La aplicación simula un sistema empresarial real de facturación electrónica (
    ```
 4. Abrir en el navegador: `http://localhost:3000`
 
-### 2.3 Despliegue en Vercel (1-Click)
+### 2.3 Ejecución con Docker / Docker Compose (Recomendado para Evaluados)
+Para levantar el entorno completo de pruebas en un solo comando mediante Docker Desktop:
+```bash
+docker compose up --build -d
+```
+- **Verificar estado y Healthcheck del contenedor:**
+  ```bash
+  docker compose ps
+  ```
+  El contenedor estará completamente listo cuando su estado indique `healthy`.
+- **Detener el entorno:**
+  ```bash
+  docker compose down
+  ```
+
+### 2.4 Despliegue en Vercel (1-Click)
 La arquitectura unificada (Frontend + API Routes) permite desplegar este repositorio directamente en Vercel sin configuración adicional:
 1. Subir el repositorio a GitHub / GitLab.
 2. Importar el proyecto en el dashboard de Vercel.
