@@ -1,58 +1,77 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Shield, Lock, Mail, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
+import { Shield, Lock, Mail, AlertCircle, Loader2, CheckCircle2, Info } from 'lucide-react';
+import { saveSession } from '@/lib/client';
+import type { ApiErrorBody, AuthUserDTO } from '@/lib/types';
+
+interface LoginFieldErrors {
+  email?: string;
+  password?: string;
+}
+
+const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginPage() {
   const router = useRouter();
-  const [randomSuffix, setRandomSuffix] = useState<string>('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   useEffect(() => {
-    // Genera un sufijo aleatorio único en cada montaje/renderizado
-    // Esto produce IDs dinámicos como "input-user-8f92" y "btn-login-3k1x"
-    const suffix = Math.random().toString(36).substring(2, 6);
-    setRandomSuffix(suffix);
+    setSessionExpired(new URLSearchParams(window.location.search).get('expired') === '1');
   }, []);
 
-  const userId = `input-user-${randomSuffix || 'init'}`;
-  const passId = `input-pass-${randomSuffix || 'init'}`;
-  const btnId = `btn-login-${randomSuffix || 'init'}`;
+  const validate = (): LoginFieldErrors => {
+    const errors: LoginFieldErrors = {};
+    if (!email.trim()) errors.email = 'El correo es obligatorio.';
+    else if (!EMAIL_FORMAT.test(email.trim())) errors.email = 'Ingresa un correo electrónico válido.';
+    if (!password) errors.password = 'La contraseña es obligatoria.';
+    return errors;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
     setErrorMessage(null);
 
-    // Retardo deliberado de 800ms antes de resolver la autenticación
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    const errors = validate();
+    setFieldErrors(errors);
+    if (errors.email || errors.password) {
+      document.getElementById(errors.email ? 'input-user' : 'input-pass')?.focus();
+      return;
+    }
+
+    setIsLoading(true);
+    setSessionExpired(false);
 
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim(), password }),
       });
 
       const data = await res.json();
 
       if (res.ok) {
-        localStorage.setItem('azurian_token', data.token);
-        localStorage.setItem('azurian_user', JSON.stringify(data.user));
+        saveSession(data.token as string, data.user as AuthUserDTO);
         router.push('/dashboard');
       } else {
-        setErrorMessage(data.error || 'Credenciales inválidas.');
+        setErrorMessage((data as ApiErrorBody).error || 'Credenciales inválidas.');
       }
-    } catch (err) {
+    } catch {
       setErrorMessage('Error al conectar con el servidor.');
     } finally {
       setIsLoading(false);
     }
   };
+
+  const inputClass =
+    'block w-full pl-10 pr-3 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm transition aria-[invalid=true]:border-red-500';
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
@@ -76,11 +95,21 @@ export default function LoginPage() {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-slate-800/90 backdrop-blur border border-slate-700/60 py-8 px-4 shadow-2xl rounded-2xl sm:px-10">
+          {sessionExpired && !errorMessage && (
+            <div
+              role="alert"
+              className="mb-6 bg-amber-950/60 border border-amber-500/50 p-4 rounded-xl flex items-start gap-3 text-amber-200 text-sm"
+            >
+              <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <span>Tu sesión expiró o no es válida. Inicia sesión nuevamente.</span>
+            </div>
+          )}
+
           {errorMessage && (
             <div
               role="alert"
               aria-live="assertive"
-              className="mb-6 bg-red-950/80 border border-red-500/50 p-4 rounded-xl flex items-start gap-3 text-red-200 text-sm animate-fadeIn"
+              className="mb-6 bg-red-950/80 border border-red-500/50 p-4 rounded-xl flex items-start gap-3 text-red-200 text-sm"
             >
               <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
               <div>
@@ -90,10 +119,10 @@ export default function LoginPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} noValidate className="space-y-6">
             <div>
               <label
-                htmlFor={userId}
+                htmlFor="input-user"
                 className="block text-sm font-medium text-slate-300 mb-1"
               >
                 Usuario / Correo Electrónico
@@ -103,23 +132,31 @@ export default function LoginPage() {
                   <Mail className="h-5 w-5" />
                 </div>
                 <input
-                  id={userId}
+                  id="input-user"
                   name="username"
                   type="email"
-                  required
                   autoComplete="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setFieldErrors((current) => ({ ...current, email: undefined }));
+                  }}
                   placeholder="admin@azurian.com"
                   aria-label="Usuario o Correo Electrónico"
-                  className="block w-full pl-10 pr-3 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm transition"
+                  aria-invalid={fieldErrors.email ? true : undefined}
+                  aria-describedby={fieldErrors.email ? 'error-email' : undefined}
+                  aria-errormessage={fieldErrors.email ? 'error-email' : undefined}
+                  className={inputClass}
                 />
               </div>
+              {fieldErrors.email && (
+                <p id="error-email" className="mt-1 text-xs text-red-400">{fieldErrors.email}</p>
+              )}
             </div>
 
             <div>
               <label
-                htmlFor={passId}
+                htmlFor="input-pass"
                 className="block text-sm font-medium text-slate-300 mb-1"
               >
                 Contraseña
@@ -129,25 +166,31 @@ export default function LoginPage() {
                   <Lock className="h-5 w-5" />
                 </div>
                 <input
-                  id={passId}
+                  id="input-pass"
                   name="password"
                   type="password"
-                  required
                   autoComplete="current-password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setFieldErrors((current) => ({ ...current, password: undefined }));
+                  }}
                   placeholder="••••••••"
                   aria-label="Contraseña"
-                  className="block w-full pl-10 pr-3 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm transition"
+                  aria-invalid={fieldErrors.password ? true : undefined}
+                  aria-describedby={fieldErrors.password ? 'error-password' : undefined}
+                  aria-errormessage={fieldErrors.password ? 'error-password' : undefined}
+                  className={inputClass}
                 />
               </div>
+              {fieldErrors.password && (
+                <p id="error-password" className="mt-1 text-xs text-red-400">{fieldErrors.password}</p>
+              )}
             </div>
 
             <div>
               <button
-                id={btnId}
                 type="submit"
-                role="button"
                 aria-label="Iniciar Sesión"
                 disabled={isLoading}
                 className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-xl shadow-md text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed transition duration-150"

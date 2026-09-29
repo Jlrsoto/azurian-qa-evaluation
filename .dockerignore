@@ -5,13 +5,13 @@ out
 build
 dist
 
-# Entornos IDE e historias de control de versiones
+# IDE y control de versiones
 .git
 .gitignore
 .vscode
 .idea
 
-# Archivos de log
+# Logs
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -22,9 +22,11 @@ allure-report
 test-results
 playwright-report
 blob-report
+coverage
 
-# Variables de entorno locales
-.env*.local
+# Variables de entorno locales (nunca deben entrar a la imagen)
+.env
+.env.*
 
 # Archivos temporales de sistema
 .DS_Store

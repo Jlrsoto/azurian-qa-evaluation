@@ -1,56 +1,38 @@
-import { NextResponse } from 'next/server';
+import { authenticate } from '@/lib/auth';
+import { validationError } from '@/lib/errors';
+import { handle, readJsonObject, respond } from '@/lib/http';
+import { requireRunId } from '@/lib/lab';
 import { documentsStore } from '@/lib/store';
+import { parseListQuery, validateDocumentInput } from '@/lib/validation';
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const rutParam = searchParams.get('rut') || undefined;
+export const runtime = 'nodejs';
 
-  const docs = documentsStore.filterByRut(rutParam);
-  return NextResponse.json(docs, { status: 200 });
-}
+export const GET = handle(async (request) => {
+  authenticate(request);
+  const runId = requireRunId(request);
 
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    const { tipoDte, folio, rutReceptor, monto } = body;
+  const query = parseListQuery(new URL(request.url).searchParams);
+  if (!query.ok) throw validationError(query.errors);
 
-    // Validación de campos obligatorios
-    if (!tipoDte || folio === undefined || folio === null || !rutReceptor || monto === undefined || monto === null) {
-      return NextResponse.json(
-        {
-          error: 'Campos requeridos faltantes.',
-          details: 'Debes proporcionar tipoDte, folio, rutReceptor y monto.',
-        },
-        { status: 400 }
-      );
-    }
+  const { items, total } = await documentsStore.list(runId, query.value);
 
-    if (isNaN(Number(folio)) || Number(folio) <= 0) {
-      return NextResponse.json(
-        { error: 'El folio debe ser un número entero positivo.' },
-        { status: 400 }
-      );
-    }
-
-    if (isNaN(Number(monto)) || Number(monto) < 0) {
-      return NextResponse.json(
-        { error: 'El monto debe ser un valor numérico válido.' },
-        { status: 400 }
-      );
-    }
-
-    const createdDocument = documentsStore.add({
-      tipoDte: String(tipoDte),
-      folio: Number(folio),
-      rutReceptor: String(rutReceptor).trim(),
-      monto: Number(monto),
-    });
-
-    return NextResponse.json(createdDocument, { status: 201 });
-  } catch (error) {
-    return NextResponse.json(
-      { error: 'Solicitud JSON inválida.' },
-      { status: 400 }
-    );
+  const headers: Record<string, string> = { 'x-total-count': String(total) };
+  if (query.value.paginated) {
+    headers['x-page'] = String(query.value.page);
+    headers['x-page-size'] = String(query.value.pageSize);
+    headers['x-total-pages'] = String(Math.max(1, Math.ceil(total / query.value.pageSize)));
   }
-}
+
+  return respond(200, items, headers);
+});
+
+export const POST = handle(async (request) => {
+  authenticate(request);
+  const runId = requireRunId(request);
+
+  const validation = validateDocumentInput(await readJsonObject(request));
+  if (!validation.ok) throw validationError(validation.errors);
+
+  const created = await documentsStore.add(runId, validation.value);
+  return respond(201, created, { Location: `/api/documents/${created.id}` });
+});

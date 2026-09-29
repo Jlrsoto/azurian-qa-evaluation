@@ -1,220 +1,242 @@
-# Portal de Gestión de Documentos Azurian — Banco de Pruebas QA Automation
+# Azurian QA Evaluation Lab
 
-Este repositorio contiene la aplicación **Portal de Gestión de Documentos Azurian**, un entorno web interactivo full-stack desarrollado en **Next.js (App Router, TypeScript, TailwindCSS)** con rutas de **API Serverless** integradas. El proyecto está diseñado específicamente como el banco de pruebas técnico corporativo para la evaluación práctica de postulantes al cargo de **QA Automatizador** en **Azurian**.
+Laboratorio local para practicar y evaluar automatización **E2E (UI), API y flujos híbridos** con Playwright y TypeScript. Simula un portal de documentos DTE con un **CRUD completo**: login, consulta con filtros y paginación, emisión, edición, envío al SII, eliminación y una API REST con las mismas capacidades.
 
----
+No contiene datos reales ni se conecta a sistemas tributarios externos.
 
-## 1. Descripción General y Contexto
+> El enunciado formal de la prueba (stack, escenarios obligatorios, entrega y rúbrica) está en [`docs/ENUNCIADO_PRUEBA.md`](docs/ENUNCIADO_PRUEBA.md). Este README describe el laboratorio y su contrato.
 
-El objetivo principal de esta prueba técnica es evaluar las competencias prácticas y arquitectónicas de los candidatos en la automatización de pruebas integradas (API REST, Interfaz UI de usuario y Flujos Híbridos E2E).
+## Inicio rápido
 
-La aplicación simula un sistema empresarial real de facturación electrónica (DTE 33, 34, 39) en Chile, incluyendo desafíos deliberados de ingeniería de software diseñados para retar la resiliencia de los scripts de automatización:
-- **Atributos de ID Dinámicos en Componentes UI:** Los identificadores `id` en inputs y botones cambian sus sufijos en cada renderizado/recarga (ej. `id="input-user-8f92"`, `id="btn-login-3k1x"`).
-- **Comportamiento Asíncrono y Spinners Deliberados:** Las peticiones de la grilla de documentos y creación de registros simulan retardos aleatorios entre **1.8 y 2.5 segundos** con estados de carga explícitos (`role="status"`).
-- **Consistencia Híbrida API/UI:** Los datos creados mediante los endpoints serverless persisten en memoria durante el runtime y se reflejan inmediatamente en la interfaz gráfica.
+Requisitos: Docker Desktop con Docker Compose.
 
----
-
-## 2. Instrucciones para el Evaluador / Administrador
-
-### 2.1 Requisitos Previos
-- **Node.js**: v18.0.0 o superior.
-- **npm**: v9.0.0 o superior.
-
-### 2.2 Ejecución Local
-1. Clonar el repositorio:
-   ```bash
-   git clone https://github.com/azurian-repo/azurian-qa-evaluation.git
-   cd azurian-qa-evaluation
-   ```
-2. Instalar dependencias:
-   ```bash
-   npm install
-   ```
-3. Iniciar el servidor de desarrollo:
-   ```bash
-   npm run dev
-   ```
-4. Abrir en el navegador: `http://localhost:3000`
-
-### 2.3 Ejecución con Docker / Docker Compose (Recomendado para Evaluados)
-Para levantar el entorno completo de pruebas en un solo comando mediante Docker Desktop:
 ```bash
-docker compose up --build -d
-```
-- **Verificar estado y Healthcheck del contenedor:**
-  ```bash
-  docker compose ps
-  ```
-  El contenedor estará completamente listo cuando su estado indique `healthy`.
-- **Detener el entorno:**
-  ```bash
-  docker compose down
-  ```
-
-### 2.4 Despliegue en Vercel (1-Click)
-La arquitectura unificada (Frontend + API Routes) permite desplegar este repositorio directamente en Vercel sin configuración adicional:
-1. Subir el repositorio a GitHub / GitLab.
-2. Importar el proyecto en el dashboard de Vercel.
-3. Presionar **Deploy**. Vercel detectará Next.js automáticamente.
-
-### 2.4 Credenciales Predeterminadas de Prueba
-| Usuario / Email | Contraseña | Rol |
-| :--- | :--- | :--- |
-| `admin@azurian.com` | `Azurian2026!` | QA Lead / Administrador |
-
-### 2.5 Endpoints Serverless Disponibles
-- `POST /api/auth/login`: Autenticación de usuario. Retorna token JWT simulado (`200 OK`) o error (`401 Unauthorized`).
-- `GET /api/documents`: Retorna el listado de documentos DTE en JSON (`200 OK`). Soporta query param `?rut=76.192.584-9`.
-- `POST /api/documents`: Crea un nuevo documento DTE.
-  - **Payload Requerido:**
-    ```json
-    {
-      "tipoDte": "DTE 33",
-      "folio": 1004,
-      "rutReceptor": "77.341.920-5",
-      "monto": 250000
-    }
-    ```
-  - Retorna `201 Created` en caso de éxito o `400 Bad Request` si faltan campos obligatorios.
-
----
-
-## 3. Instrucciones Formales para el Postulante / Evaluado
-
-### 3.1 Objetivo de la Prueba
-Construir y entregar un repositorio independiente o una suite de pruebas automatizadas que ejecute pruebas sobre este portal utilizando el stack técnico oficial de Azurian:
-- **Framework E2E:** [Playwright](https://playwright.dev/) con [TypeScript](https://www.typescriptlang.org/)
-- **Metodología:** [Cucumber (BDD / Gherkin)](https://cucumber.io/)
-- **Reportabilidad:** [Allure Report](https://allurereport.org/)
-
-### 3.2 Desafíos Técnicos a Superar
-
-> [!WARNING]
-> **Prohibición de XPath Estáticos y Selectores por ID Frágiles:**
-> Debido a que la aplicación genera atributivos `id` aleatorios en cada render (ej. `#input-user-x9a2`), **quedan estrictamente prohibidos los selectores frágiles basados en IDs fijos o XPath absolutos**.
->
-> Se exige el uso estricto de **Page Object Model (POM)** y localizadores semánticos recomendados por Playwright:
-> - `page.getByRole(...)`
-> - `page.getByLabel(...)`
-> - `page.getByPlaceholder(...)`
-> - `page.locator('tr').filter({ hasText: '...' })`
-
-> [!IMPORTANT]
-> **Manejo de Asincronía:**
-> Se prohíbe el uso de pausas estáticas o fijas (como `page.waitForTimeout()`, `sleep()` o `Thread.sleep()`). La suite debe validar el ocultamiento del loader/spinner mediante esperas explícitas y auto-waitings nativos de Playwright (`expect(locator).toBeVisible()`).
-
----
-
-### 3.3 Escenarios BDD / Gherkin Mínimos Solicitados
-
-El candidato debe implementar como mínimo los siguientes escenarios distribuidos en sus respectivos archivos `.feature`:
-
-#### Feature 1: Validación de API REST Backend (`features/api_documents.feature`)
-```gherkin
-# language: es
-Característica: Gestión de Autenticación y Documentos vía API REST
-
-  Escenario: Autenticación exitosa mediante API Login
-    Dado que consumo el servicio de login con usuario "admin@azurian.com" y clave "Azurian2026!"
-    Entonces la respuesta debe tener el código de estado 200
-    Y la respuesta debe contener un token JWT válido y los datos del usuario
-
-  Escenario: Intentar autenticación con credenciales inválidas
-    Dado que consumo el servicio de login con usuario "user@invalido.com" y clave "ClaveErronea"
-    Entonces la respuesta debe tener el código de estado 401
-    Y la respuesta debe incluir el mensaje de error "Credenciales inválidas"
-
-  Escenario: Creación exitosa de un documento DTE vía API REST
-    Dado que envío una solicitud POST a "/api/documents" con los siguientes datos:
-      | tipoDte | folio | rutReceptor   | monto  |
-      | DTE 33  | 9901  | 76.543.210-K  | 450000 |
-    Entonces el código de respuesta debe ser 201
-    Y el cuerpo de la respuesta debe incluir el ID generado y estado "ACEPTADO"
+docker compose up --build
 ```
 
-#### Feature 2: Autenticación e Interacción UI (`features/ui_login_dashboard.feature`)
-```gherkin
-# language: es
-Característica: Autenticación de Usuario y Filtrado en Interfaz Gráfica (UI)
+El portal queda disponible en `http://localhost:3000`. El comando inicia la aplicación Next.js y PostgreSQL; la aplicación espera a que la base de datos esté saludable antes de iniciar.
 
-  Escenario: Inicio de sesión exitoso y visualización del Dashboard
-    Dado que navego a la página de login
-    Cuando ingreso el usuario "admin@azurian.com" y la contraseña "Azurian2026!" usando localizadores accesibles
-    Y hago clic en el botón "Iniciar Sesión"
-    Entonces debo ser redirigido al dashboard de documentos
-    Y debo ver el mensaje de bienvenida "Bienvenido, Administrador Azurian"
+Para detenerlo:
 
-  Escenario: Filtrado dinámico de documentos por RUT en la grilla
-    Dado que me encuentro autenticado en el dashboard de documentos
-    Cuando busco por el RUT Receptor "76.192.584-9" en la barra de herramientas
-    Y espero a que el indicador de carga finalice
-    Entonces la tabla debe mostrar únicamente la fila correspondiente al RUT "76.192.584-9"
+```bash
+docker compose down
 ```
 
-#### Feature 3: Prueba Híbrida E2E (API + UI) (`features/hybrid_e2e.feature`)
-```gherkin
-# language: es
-Característica: Verificación Híbrida E2E de Documentos (API a UI)
+Para reiniciar por completo los datos locales:
 
-  Escenario: Crear un documento por API y verificar su presencia visual en la interfaz de usuario
-    Dado que creo un documento DTE vía API REST con folio 8899, RUT "99.888.777-6" y monto 120000
-    Cuando el postulante se autentica en la aplicación web e ingresa al dashboard
-    Y realiza la búsqueda del RUT "99.888.777-6"
-    Entonces la tabla de la interfaz gráfica debe mostrar la fila con el Folio "8899" y el monto "$ 120.000 CLP"
+```bash
+docker compose down -v
 ```
 
----
+> El último comando elimina únicamente el volumen local `qa_lab_data` de este laboratorio.
 
-## 4. Plantilla de Estructura de Proyecto Sugerida para el Postulante
+## Credenciales de laboratorio
 
-Se sugiere que la solución entregada por el candidato posea la siguiente estructura de archivos:
+| Usuario | Contraseña |
+|---|---|
+| `admin@azurian.com` | `Azurian2026!` |
 
-```text
-azurian-qa-automation-suite/
-├── features/
-│   ├── api_documents.feature
-│   ├── ui_login_dashboard.feature
-│   └── hybrid_e2e.feature
-├── src/
-│   ├── pages/                   # Page Object Model (POM)
-│   │   ├── BasePage.ts
-│   │   ├── LoginPage.ts
-│   │   └── DashboardPage.ts
-│   ├── steps/                   # Step Definitions (Cucumber)
-│   │   ├── apiSteps.ts
-│   │   ├── loginSteps.ts
-│   │   └── dashboardSteps.ts
-│   ├── api/                     # Clientes API / API Request Helpers
-│   │   └── DocumentsApiClient.ts
-│   └── utils/                   # Utilities, Hooks y Allure Reporters
-│       └── hooks.ts
-├── cucumber.js                  # Configuración de Cucumber Runner
-├── playwright.config.ts         # Configuración de Playwright
-├── tsconfig.json
-├── package.json
-└── README.md
+## Variables de entorno
+
+Se definen en un archivo `.env` basado en `.env.example`.
+
+| Variable | Por defecto | Uso |
+|---|---|---|
+| `APP_PORT` | `3000` | Puerto del host donde se publica el portal (el contenedor siempre usa el 3000). |
+| `LAB_USERNAME` / `LAB_PASSWORD` | `admin@azurian.com` / `Azurian2026!` | Credenciales válidas. |
+| `LAB_DELAY_MIN_MS` / `LAB_DELAY_MAX_MS` | `300` / `3200` | Rango de la latencia aleatoria por petición. |
+| `LAB_RESET_KEY` | `local-lab-reset` | Clave del reinicio administrativo. |
+| `LAB_TOKEN_SECRET` | `azurian-qa-lab-secret` | Secreto con el que se firman los tokens. |
+| `LAB_TOKEN_TTL_SECONDS` | `3600` | Vigencia del token (1–86400). Bajarla, por ejemplo a `5`, permite ejercitar el escenario de token vencido. |
+
+## Contrato de datos y aislamiento
+
+Cada navegador crea un identificador de ejecución y lo conserva en `localStorage` como `azurian_lab_run_id`. La UI lo envía en el encabezado `x-lab-run-id`; el API usa ese identificador para separar los documentos de cada participante.
+
+Para el escenario híbrido API → UI, la suite puede generar un `runId` propio, incluirlo en el encabezado de sus peticiones API y establecer el mismo valor en `localStorage` antes de abrir el portal. El formato permitido es de 3 a 80 caracteres alfanuméricos, `_` o `-`. Si se omite el encabezado se usa `default` (sólo útil para exploración manual).
+
+Cada ejecución se siembra **una sola vez**, la primera vez que se usa, con **48 documentos**:
+
+| Dimensión | Valores |
+|---|---|
+| Tipo | 16 × `DTE 33`, 16 × `DTE 34`, 16 × `DTE 39` |
+| Estado | 17 × `ACEPTADO`, 16 × `PENDIENTE`, 15 × `RECHAZADO` |
+| Monto total | `$ 36.546.400` |
+| Receptores | 15 RUT; tres de ellos tienen 4 documentos y el resto 3 |
+
+Hay RUT con más de un documento del mismo tipo a propósito: una prueba correcta debe acotar por filtros y validar la fila exacta por folio, monto u otro dato de negocio; no por la primera posición de la tabla. Los documentos eliminados no reaparecen. Todos los RUT del seed tienen dígito verificador válido.
+
+Un folio es único dentro de la misma ejecución; intentar repetirlo devuelve `409`.
+
+## Autenticación
+
+`POST /api/auth/login` devuelve un **JWT firmado (HS256)** con su vigencia. Todas las rutas de `/api/documents` y `/api/auth/me` exigen:
+
+```http
+Authorization: Bearer <token>
 ```
 
----
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "expiresIn": 3600,
+  "user": { "id": "user-azurian-01", "email": "admin@azurian.com", "name": "Administrador Azurian", "role": "QA Lab Participant" }
+}
+```
 
-## 5. Rúbrica y Criterios de Evaluación Azurian
+Un token ausente, mal formado, con firma alterada o vencido devuelve `401` (`UNAUTHORIZED` o `TOKEN_EXPIRED`) con el encabezado `WWW-Authenticate: Bearer`. En la UI, un `401` limpia la sesión y redirige a `/login?expired=1`.
 
-Los postulantes serán evaluados por el equipo de QA Leads & Architects de Azurian conforme a los siguientes parámetros cuantitativos y cualitativos:
+## API disponible
 
-| Criterio de Evaluación | Pesaje | Excelente (100%) | Aceptable (70%) | Insuficiente (0-40%) |
-| :--- | :---: | :--- | :--- | :--- |
-| **Arquitectura Page Object Model (POM)** | **25%** | Separación limpia entre definición de elementos, acciones de página y steps de Cucumber. Clases reutilizables y bien estructuradas. | POM implementado pero con acoplamiento menor de aserciones dentro de las páginas. | No se usa POM o los selectores están incrustados directamente en los step definitions. |
-| **Resiliencia de Localizadores (IDs Dinámicos)** | **25%** | Uso exclusivo de selectores semánticos (`getByRole`, `getByLabel`, `getByPlaceholder`, `filter({ hasText })`). Inmune a cambios de ID. | Uso mayoritario de selectores semánticos, con algún selector por clase CSS genérico. | Fracaso por uso de IDs fijos (`#input-user`) o XPath frágiles e inestables. |
-| **Manejo de Asincronía y Esperas** | **20%** | Cero uso de pausas estáticas (`waitForTimeout` / `sleep`). Uso impecable de auto-waitings de Playwright y validación de spinners. | Raras pausas estáticas aisladas, pero la mayoría de las esperas son dinámicas. | Abuso de `waitForTimeout()` o fallos intermitentes por condiciones de carrera (*flaky tests*). |
-| **Calidad BDD / Gherkin** | **15%** | Redacción declarativa centrada en el negocio, reutilización de steps y uso correcto de Datatables y Backgrounds. | Redacción orientada al negocio pero con algunos detalles demasiado imperativos ("hago click en el botón X"). | Gherkin técnico/imperativo que describe la implementación en lugar del comportamiento. |
-| **Tipado TypeScript y Clean Code** | **10%** | Código estrictamente tipado (sin uso de `any`), modular, limpio y bajo principios SOLID/DRY. | Uso menor de `any`, pero código entendible y bien formateado. | Código JavaScript disfrazado de TypeScript con `any` en todas partes y duplicación. |
-| **Reportabilidad Allure** | **5%** | Allure Report integrado correctamente, generando métricas y adjuntando capturas de pantalla (*screenshots*) automáticamente en fallos. | Allure Report generado pero sin evidencias de captura en caso de fallo. | Sin reporte Allure o fallos en la configuración de la ejecución. |
+| Método | Ruta | Resultado |
+|---|---|---|
+| `POST` | `/api/auth/login` | `200` con token · `400` datos faltantes · `401` credenciales inválidas. |
+| `GET` | `/api/auth/me` | `200` con el usuario y `expiresAt` · `401`. |
+| `GET` | `/api/documents` | `200` con el arreglo de documentos (filtros y paginación opcionales). |
+| `POST` | `/api/documents` | `201` con el documento creado (`PENDIENTE`) · `400` · `409` folio duplicado. |
+| `GET` | `/api/documents/{id}` | `200` · `404`. |
+| `PUT` | `/api/documents/{id}` | `200` reemplazo de los campos editables · `400` · `404` · `409` documento aceptado. |
+| `PATCH` | `/api/documents/{id}` | `200` actualización parcial · `400` · `404` · `409`. |
+| `DELETE` | `/api/documents/{id}` | `204` sin cuerpo · `404` · `409` documento aceptado. |
+| `POST` | `/api/documents/{id}/send` | `200` con el documento ya resuelto por el SII · `404` · `409` si no está `PENDIENTE`. |
+| `GET` | `/api/documents/summary` | `200` con totales de la ejecución. |
+| `GET` | `/api/health` | Healthcheck del laboratorio. |
 
----
+### Listado, filtros y paginación
 
-## 6. Licencia y Soporte
+`GET /api/documents?rut=&tipoDte=&estado=&page=&pageSize=`
 
-Este proyecto es propiedad intelectual de **Azurian**. Queda estrictamente prohibida su distribución no autorizada fuera del proceso de selección técnica corporativa.
+| Parámetro | Valores | Notas |
+|---|---|---|
+| `rut` | dígitos, puntos, guion y `K` (máx. 12) | Búsqueda parcial que ignora puntos y guion: `76192584` encuentra `76.192.584-9`. |
+| `tipoDte` | `DTE 33`, `DTE 34`, `DTE 39` o `TODOS` | |
+| `estado` | `ACEPTADO`, `PENDIENTE`, `RECHAZADO` o `TODOS` | |
+| `page`, `pageSize` | enteros ≥ 1 y 1–100 | Si se envía alguno, se pagina (por defecto página 1 de 10). Sin ellos se devuelve todo. |
 
-Para consultas técnicas o reporte de inconsistencias en la plataforma de prueba, contactar a **qa-lead@azurian.com**.
+El cuerpo es siempre un arreglo. Los metadatos van en encabezados: `x-total-count` (siempre) y, al paginar, `x-page`, `x-page-size` y `x-total-pages`. El orden es `fechaEmision` descendente y luego `folio` descendente. Una página fuera de rango devuelve `[]` con `200`.
+
+### Modelo de documento
+
+```json
+{
+  "id": "1f0c…",
+  "tipoDte": "DTE 33",
+  "folio": 9901,
+  "rutReceptor": "76.543.209-K",
+  "monto": 450000,
+  "fechaEmision": "2026-09-28",
+  "estado": "PENDIENTE",
+  "deliveryChannel": "EMAIL",
+  "sendCopy": true,
+  "contactEmail": "contacto@empresa.cl",
+  "observaciones": null,
+  "attachmentName": "respaldo.pdf",
+  "createdAt": "2026-09-28T22:44:39.000Z",
+  "updatedAt": "2026-09-28T22:44:39.000Z"
+}
+```
+
+`estado`, `id`, `createdAt` y `updatedAt` los asigna el servidor: si se envían en `POST`/`PUT`/`PATCH` se ignoran. Lo mismo ocurre con cualquier campo desconocido.
+
+### Reglas de validación
+
+Se aplican **en el servidor y también en el formulario** (mismas reglas, mismos mensajes). La API valida tipos de forma estricta (`"123"` no es un número) y devuelve **todos** los errores a la vez.
+
+| Campo | Requerido | Regla |
+|---|---|---|
+| `tipoDte` | sí | `DTE 33`, `DTE 34` o `DTE 39`. |
+| `folio` | sí | Entero de 1 a 9.999.999. Único por ejecución. |
+| `rutReceptor` | sí | Formato `12.345.678-9` (con puntos y guion) y **dígito verificador válido (módulo 11)**. Una `k` minúscula se normaliza a `K`. |
+| `monto` | sí | Entero en CLP de 1 a 999.999.999. |
+| `fechaEmision` | sí | `YYYY-MM-DD`, fecha real de calendario, entre `2000-01-01` y hoy (se tolera +1 día por zona horaria). |
+| `deliveryChannel` | no (`PORTAL`) | `PORTAL` o `EMAIL`. |
+| `sendCopy` | no (`false`) | Booleano. |
+| `contactEmail` | condicional | **Obligatorio si `sendCopy` es `true` o el canal es `EMAIL`**. Si se envía, debe ser un correo válido (máx. 120). |
+| `observaciones` | no | Texto de hasta 300 caracteres. |
+| `attachmentName` | no | Nombre con extensión `.pdf`, `.xml` o `.txt` (máx. 120, sin `/` ni `\`). En la UI el archivo no puede superar 2 MB. |
+
+`PUT` es un **reemplazo**: exige los campos obligatorios y los opcionales omitidos vuelven a su valor por defecto. `PATCH` valida sólo lo enviado (combinado con el estado actual, por lo que la regla de `contactEmail` sigue aplicando) y rechaza un cuerpo sin campos editables.
+
+### Ciclo de vida y reglas de estado
+
+| Estado | Editar (`PUT`/`PATCH`) | Eliminar | Enviar al SII |
+|---|---|---|---|
+| `PENDIENTE` | Sí (sigue `PENDIENTE`) | Sí | Sí |
+| `RECHAZADO` | Sí, **vuelve a `PENDIENTE`** | Sí | No |
+| `ACEPTADO` | No → `409 DOCUMENT_LOCKED` | No → `409 DOCUMENT_LOCKED` | No |
+
+- Todo documento nuevo nace `PENDIENTE`.
+- `tipoDte` y `folio` son **inmutables**: enviarlos con otro valor devuelve `400` (enviarlos con el mismo valor está permitido).
+- **Enviar al SII** resuelve el documento de forma determinista: `monto` ≤ 10.000.000 → `ACEPTADO`; mayor → `RECHAZADO`.
+
+### Formato de error
+
+```json
+{
+  "error": "Datos de entrada inválidos. Revisa los campos indicados.",
+  "code": "VALIDATION_ERROR",
+  "details": [{ "field": "monto", "message": "El monto es obligatorio." }]
+}
+```
+
+| Código HTTP | `code` |
+|---|---|
+| 400 | `VALIDATION_ERROR` (con `details`), `INVALID_JSON`, `INVALID_RUN_ID` |
+| 401 | `UNAUTHORIZED`, `TOKEN_EXPIRED`, `INVALID_CREDENTIALS` |
+| 403 | `FORBIDDEN` (reinicio administrativo) |
+| 404 | `NOT_FOUND` |
+| 409 | `DUPLICATE_FOLIO`, `DOCUMENT_LOCKED`, `INVALID_STATE` |
+
+Orden de precedencia: `401` → `400` (`x-lab-run-id`) → `404` (documento inexistente) → `400` (cuerpo) → `409` (estado). Es decir, un cuerpo inválido sobre un documento aceptado responde `400`, no `409`.
+
+Todas las respuestas, incluidos los errores, incluyen `x-request-id` y `x-lab-delay-ms` para diagnóstico.
+
+### Resumen
+
+`GET /api/documents/summary` → `{ "total": 48, "montoTotal": 36546400, "porEstado": { "ACEPTADO": 17, "PENDIENTE": 16, "RECHAZADO": 15 } }`. Refleja toda la ejecución (no depende de los filtros de la tabla) y se actualiza con cada alta, edición, envío o baja.
+
+## Interfaz
+
+- **Login** con validación en línea, error de credenciales y aviso de sesión vencida.
+- **Dashboard**: tarjetas de resumen, tabla semántica con filtros por RUT, tipo y estado, y paginación de 10 filas.
+- **Crear** y **editar** en un diálogo con `select`, `date`, `number`, `text`, `radio`, `checkbox`, `email`, `file` y `textarea` (con contador). El correo de contacto se habilita sólo cuando corresponde; en edición `tipoDte` y `folio` quedan bloqueados.
+- **Ver detalle** (consulta el documento por API), **Enviar al SII** y **Eliminar** con diálogo de confirmación (`alertdialog`).
+- Las acciones no aplicables aparecen deshabilitadas (por ejemplo, editar o eliminar un documento aceptado).
+- Avisos de resultado (`role="status"`), errores (`role="alert"`), estados de carga accesibles y diálogos que se cierran con `Escape`.
+
+Los identificadores internos no constituyen contrato de automatización. El portal está rotulado semánticamente para favorecer `getByRole`, `getByLabel`, `getByText` y relaciones de tabla accesibles.
+
+## Asincronía deliberada
+
+El servidor demora de forma aleatoria cada login, consulta o escritura. Por defecto el rango es entre 300 y 3.200 ms; se puede ajustar con `LAB_DELAY_MIN_MS` y `LAB_DELAY_MAX_MS`. La UI expone un estado de carga y deshabilita acciones mientras la petición está en curso. Si llegan respuestas fuera de orden, la UI conserva siempre la de la consulta más reciente.
+
+Las pruebas deben esperar condiciones observables —respuesta, spinner, diálogo, tabla, mensaje o URL— y no pausas fijas como `waitForTimeout` o `sleep`.
+
+## Reglas de evaluación
+
+| Permitido y esperado | No válido para la evaluación |
+|---|---|
+| `getByRole`, `getByLabel`, texto visible y relaciones semánticas de tabla. | XPath absoluto, clases de estilo, IDs internos o índices globales como locator. |
+| `expect`, auto-wait de Playwright, espera de respuesta o de un estado visible. | `waitForTimeout`, `sleep` o cualquier pausa fija. |
+| POM, cliente API modular, datos únicos por `runId` y flujo API → UI. | Leer o modificar directamente PostgreSQL, las latencias, el seed o datos de otra ejecución. |
+| Filtrar y validar la fila precisa por datos de negocio. | Aprobar una prueba porque la primera fila o un resultado parcial coincide. |
+
+Los límites de la evaluación se revisan junto con la suite. Una prueba puede usar una espera explícita de Playwright cuando está ligada a un evento observable; el problema es esperar un tiempo arbitrario.
+
+## Reinicio administrativo por ejecución
+
+Sólo el facilitador puede reiniciar una ejecución sin borrar el volumen completo. El endpoint no aplica la latencia simulada:
+
+```bash
+curl -X POST http://localhost:3000/api/lab/reset \
+  -H "x-lab-run-id: mi-ejecucion" \
+  -H "x-lab-reset-key: local-lab-reset"
+```
+
+En un uso compartido, cambia `LAB_RESET_KEY`, no lo publiques y asigna un `runId` distinto a cada participante.
+
+## Notas para el facilitador
+
+- Si el volumen `qa_lab_data` viene de una versión anterior del laboratorio, el esquema se migra automáticamente al iniciar (columna `updated_at` y tabla `lab_runs`). Los RUT de esos documentos antiguos pueden no cumplir el dígito verificador y, al editarlos, el API los rechazará: `docker compose down -v` deja el laboratorio con los datos semilla actuales.
+- Para practicar el token vencido sin esperar una hora, levanta el laboratorio con `LAB_TOKEN_TTL_SECONDS=5` y espera el `401` con una condición (por ejemplo `expect.poll`), nunca con una pausa fija.
+- En Windows, el sistema puede reservar rangos de puertos (Hyper-V/WinNAT) que incluyan el 3000 y Docker falla con `bind: An attempt was made to access a socket in a way forbidden by its access permissions`. Verifícalo con `netsh int ipv4 show excludedportrange protocol=tcp` y publica el portal en otro puerto con `APP_PORT`, por ejemplo `APP_PORT=3100 docker compose up --build` (o `APP_PORT=3100` en tu `.env`). El portal quedará en `http://localhost:3100`.
