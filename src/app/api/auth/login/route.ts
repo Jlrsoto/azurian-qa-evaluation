@@ -1,39 +1,47 @@
 import { NextResponse } from 'next/server';
+import { applyLabHeaders, getRequestId, waitForLabDelay } from '@/lib/lab';
+
+export const runtime = 'nodejs';
+
+function respond(body: unknown, status: number, delay: number, requestId: string) {
+  return applyLabHeaders(NextResponse.json(body, { status }), delay, requestId);
+}
 
 export async function POST(request: Request) {
+  const delay = await waitForLabDelay();
+  const requestId = getRequestId();
+
   try {
     const body = await request.json();
-    const { username, password } = body;
+    const userEmail = body.username || body.email;
+    const expectedUser = process.env.LAB_USERNAME || 'admin@azurian.com';
+    const expectedPassword = process.env.LAB_PASSWORD || 'Azurian2026!';
 
-    // Acepta tanto "username" como "email" en el payload por flexibilidad
-    const userEmail = username || body.email;
-
-    if (userEmail === 'admin@azurian.com' && password === 'Azurian2026!') {
-      return NextResponse.json(
+    if (userEmail === expectedUser && body.password === expectedPassword) {
+      return respond(
         {
-          token: 'jwt-token-azurian-xyz-2026-qa-lead',
+          token: 'qa-lab-token-portal-documentos',
           expiresIn: 3600,
           user: {
             id: 'user-azurian-01',
-            email: 'admin@azurian.com',
+            email: expectedUser,
             name: 'Administrador Azurian',
-            role: 'QA Lead Evaluator',
+            role: 'QA Lab Participant',
           },
         },
-        { status: 200 }
+        200,
+        delay,
+        requestId
       );
     }
 
-    return NextResponse.json(
-      {
-        error: 'Credenciales inválidas. Por favor verifique su usuario y contraseña.',
-      },
-      { status: 401 }
+    return respond(
+      { error: 'Credenciales inválidas. Por favor verifique su usuario y contraseña.' },
+      401,
+      delay,
+      requestId
     );
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Formato de solicitud inválido.' },
-      { status: 400 }
-    );
+    return respond({ error: 'Formato de solicitud inválido.' }, 400, delay, requestId);
   }
 }
