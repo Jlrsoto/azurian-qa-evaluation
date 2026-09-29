@@ -1,47 +1,38 @@
-import { NextResponse } from 'next/server';
-import { applyLabHeaders, getRequestId, waitForLabDelay } from '@/lib/lab';
+import { issueToken } from '@/lib/auth';
+import { invalidCredentials, validationError } from '@/lib/errors';
+import { handle, readJsonObject, respond } from '@/lib/http';
+import type { AuthUserDTO } from '@/lib/types';
+import type { FieldError } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 
-function respond(body: unknown, status: number, delay: number, requestId: string) {
-  return applyLabHeaders(NextResponse.json(body, { status }), delay, requestId);
-}
+export const POST = handle(async (request) => {
+  const body = await readJsonObject(request);
 
-export async function POST(request: Request) {
-  const delay = await waitForLabDelay();
-  const requestId = getRequestId();
+  // `username` se mantiene como alias de `email` por compatibilidad.
+  const rawEmail = body.email ?? body.username;
+  const email = typeof rawEmail === 'string' ? rawEmail.trim() : '';
+  const password = typeof body.password === 'string' ? body.password : '';
 
-  try {
-    const body = await request.json();
-    const userEmail = body.username || body.email;
-    const expectedUser = process.env.LAB_USERNAME || 'admin@azurian.com';
-    const expectedPassword = process.env.LAB_PASSWORD || 'Azurian2026!';
+  const errors: FieldError[] = [];
+  if (!email) errors.push({ field: 'email', message: 'El correo es obligatorio.' });
+  if (!password) errors.push({ field: 'password', message: 'La contraseña es obligatoria.' });
+  if (errors.length > 0) throw validationError(errors);
 
-    if (userEmail === expectedUser && body.password === expectedPassword) {
-      return respond(
-        {
-          token: 'qa-lab-token-portal-documentos',
-          expiresIn: 3600,
-          user: {
-            id: 'user-azurian-01',
-            email: expectedUser,
-            name: 'Administrador Azurian',
-            role: 'QA Lab Participant',
-          },
-        },
-        200,
-        delay,
-        requestId
-      );
-    }
+  const expectedUser = process.env.LAB_USERNAME || 'admin@azurian.com';
+  const expectedPassword = process.env.LAB_PASSWORD || 'Azurian2026!';
 
-    return respond(
-      { error: 'Credenciales inválidas. Por favor verifique su usuario y contraseña.' },
-      401,
-      delay,
-      requestId
-    );
-  } catch (error) {
-    return respond({ error: 'Formato de solicitud inválido.' }, 400, delay, requestId);
+  if (email.toLowerCase() !== expectedUser.toLowerCase() || password !== expectedPassword) {
+    throw invalidCredentials();
   }
-}
+
+  const user: AuthUserDTO = {
+    id: 'user-azurian-01',
+    email: expectedUser,
+    name: 'Administrador Azurian',
+    role: 'QA Lab Participant',
+  };
+  const { token, expiresIn } = issueToken(user);
+
+  return respond(200, { token, expiresIn, user });
+});

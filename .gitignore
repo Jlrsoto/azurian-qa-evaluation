@@ -18,8 +18,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local env files
+# local env files (se versiona solo .env.example)
+.env
 .env*.local
+!.env.example
 
 # vercel
 .vercel

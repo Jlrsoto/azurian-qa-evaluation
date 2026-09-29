@@ -1,127 +1,220 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  AlertCircle,
   Building2,
   CheckCircle,
-  Clock,
+  ChevronLeft,
+  ChevronRight,
   Eye,
   FileText,
   Filter,
+  Info,
   Loader2,
   LogOut,
+  Pencil,
   PlusCircle,
   RefreshCw,
   Search,
+  Send,
   Shield,
-  XCircle,
+  Trash2,
+  X,
 } from 'lucide-react';
-import NewDocumentModal from '@/components/NewDocumentModal';
+import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
+import DocumentDetailDialog from '@/components/DocumentDetailDialog';
+import DocumentFormModal from '@/components/DocumentFormModal';
+import StatusBadge, { statusLabel } from '@/components/StatusBadge';
+import SummaryCards from '@/components/SummaryCards';
+import {
+  apiFetch,
+  clearSession,
+  errorMessage,
+  getStoredUser,
+  getToken,
+  isAbortError,
+  isSessionError,
+} from '@/lib/client';
+import type { AuthUserDTO, DocumentDTE, DocumentSummary } from '@/lib/types';
 
-interface DocumentDTE {
-  id: string;
+const PAGE_SIZE = 10;
+const LOCKED_HINT = 'Un documento aceptado no puede modificarse ni eliminarse.';
+const SEND_HINT = 'Solo los documentos pendientes pueden enviarse al SII.';
+
+interface Filters {
+  rut: string;
   tipoDte: string;
-  folio: number;
-  rutReceptor: string;
-  monto: number;
-  fechaEmision: string;
-  estado: 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO';
-  contactEmail?: string | null;
-  sendCopy: boolean;
-  deliveryChannel: 'PORTAL' | 'EMAIL';
-  observaciones?: string | null;
-  attachmentName?: string | null;
+  estado: string;
 }
 
-function getLabRunId(): string {
-  const savedRunId = localStorage.getItem('azurian_lab_run_id');
-  if (savedRunId) return savedRunId;
+const NO_FILTERS: Filters = { rut: '', tipoDte: 'TODOS', estado: 'TODOS' };
 
-  const runId = `ui-${crypto.randomUUID()}`;
-  localStorage.setItem('azurian_lab_run_id', runId);
-  return runId;
+type DialogState =
+  | { kind: 'create' }
+  | { kind: 'edit'; id: string }
+  | { kind: 'detail'; id: string }
+  | { kind: 'delete'; document: DocumentDTE }
+  | null;
+
+interface Notice {
+  tone: 'success' | 'warning';
+  text: string;
 }
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const [ready, setReady] = useState(false);
+  const [user, setUser] = useState<AuthUserDTO | null>(null);
+
   const [documents, setDocuments] = useState<DocumentDTE[]>([]);
-  const [searchRut, setSearchRut] = useState('');
-  const [selectedTipoDte, setSelectedTipoDte] = useState('TODOS');
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<DocumentSummary | null>(null);
+
+  const [rutInput, setRutInput] = useState('');
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [page, setPage] = useState(1);
+  const [reloadToken, setReloadToken] = useState(0);
+
   const [isLoading, setIsLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedDocDetail, setSelectedDocDetail] = useState<DocumentDTE | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const fetchDocuments = useCallback(async (rutQuery = '', tipoDte = 'TODOS') => {
-    setIsLoading(true);
-    setErrorMessage(null);
-
-    const query = new URLSearchParams();
-    if (rutQuery.trim()) query.set('rut', rutQuery.trim());
-    if (tipoDte !== 'TODOS') query.set('tipoDte', tipoDte);
-
-    try {
-      const response = await fetch(`/api/documents?${query.toString()}`, {
-        headers: { 'x-lab-run-id': getLabRunId() },
-      });
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'No fue posible consultar los documentos.');
-      }
-
-      setDocuments(data);
-    } catch (error) {
-      setDocuments([]);
-      setErrorMessage(error instanceof Error ? error.message : 'No fue posible consultar los documentos.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [dialog, setDialog] = useState<DialogState>(null);
+  const [sendingId, setSendingId] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('azurian_token');
-    const storedUser = localStorage.getItem('azurian_user');
-
-    if (!token) {
-      router.push('/login');
+    if (!getToken()) {
+      router.replace('/login');
       return;
     }
+    setUser(getStoredUser());
+    setReady(true);
+  }, [router]);
 
-    if (storedUser) {
+  // Listado: se vuelve a consultar al cambiar filtros, página o al pedir recarga.
+  // Cada consulta cancela la anterior para que una respuesta lenta no pise a una más reciente.
+  useEffect(() => {
+    if (!ready) return;
+    const controller = new AbortController();
+
+    const query = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    if (filters.rut) query.set('rut', filters.rut);
+    if (filters.tipoDte !== 'TODOS') query.set('tipoDte', filters.tipoDte);
+    if (filters.estado !== 'TODOS') query.set('estado', filters.estado);
+
+    setIsLoading(true);
+    setErrorText(null);
+
+    (async () => {
       try {
-        setUser(JSON.parse(storedUser));
-      } catch {
-        setUser({ name: 'Administrador Azurian', email: 'admin@azurian.com' });
-      }
-    }
+        const { data, headers } = await apiFetch<DocumentDTE[]>(`/api/documents?${query.toString()}`, {
+          signal: controller.signal,
+        });
+        const count = Number(headers.get('x-total-count') ?? data.length);
+        const lastPage = Math.max(1, Math.ceil(count / PAGE_SIZE));
 
-    fetchDocuments();
-  }, [fetchDocuments, router]);
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
+
+        setDocuments(data);
+        setTotal(count);
+        setIsLoading(false);
+      } catch (caught) {
+        if (isAbortError(caught) || isSessionError(caught)) return;
+        setDocuments([]);
+        setTotal(0);
+        setErrorText(errorMessage(caught, 'No fue posible consultar los documentos.'));
+        setIsLoading(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [ready, filters, page, reloadToken]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        const { data } = await apiFetch<DocumentSummary>('/api/documents/summary', { signal: controller.signal });
+        setSummary(data);
+      } catch {
+        // El resumen es informativo: si falla se conserva el último valor conocido.
+      }
+    })();
+
+    return () => controller.abort();
+  }, [ready, reloadToken]);
+
+  const refresh = () => setReloadToken((token) => token + 1);
 
   const handleSearchSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-    fetchDocuments(searchRut, selectedTipoDte);
+    setFilters((current) => ({ ...current, rut: rutInput.trim() }));
+    setPage(1);
   };
 
   const handleTipoDteChange = (tipoDte: string) => {
-    setSelectedTipoDte(tipoDte);
-    fetchDocuments(searchRut, tipoDte);
+    setFilters((current) => ({ ...current, tipoDte }));
+    setPage(1);
+  };
+
+  const handleEstadoChange = (estado: string) => {
+    setFilters((current) => ({ ...current, estado }));
+    setPage(1);
   };
 
   const handleResetFilters = () => {
-    setSearchRut('');
-    setSelectedTipoDte('TODOS');
-    fetchDocuments();
+    setRutInput('');
+    setFilters(NO_FILTERS);
+    setPage(1);
+    refresh();
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('azurian_token');
-    localStorage.removeItem('azurian_user');
+    clearSession();
     router.push('/login');
   };
+
+  const handleSaved = (text: string) => {
+    setDialog(null);
+    setActionError(null);
+    setNotice({ tone: 'success', text });
+    refresh();
+  };
+
+  const handleSend = async (target: DocumentDTE) => {
+    setSendingId(target.id);
+    setNotice(null);
+    setActionError(null);
+
+    try {
+      const { data } = await apiFetch<DocumentDTE>(`/api/documents/${encodeURIComponent(target.id)}/send`, {
+        method: 'POST',
+      });
+      setNotice(
+        data.estado === 'ACEPTADO'
+          ? { tone: 'success', text: `Documento folio ${data.folio} enviado al SII. Resultado: ${statusLabel(data.estado)}.` }
+          : { tone: 'warning', text: `Documento folio ${data.folio} enviado al SII. Resultado: ${statusLabel(data.estado)}. Corrige el documento para reenviarlo.` }
+      );
+    } catch (caught) {
+      if (isSessionError(caught)) return;
+      setActionError(errorMessage(caught, 'No fue posible enviar el documento al SII.'));
+    } finally {
+      setSendingId(null);
+      refresh();
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const rangeStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(page * PAGE_SIZE, total);
+  const isBusy = sendingId !== null;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col">
@@ -164,11 +257,11 @@ export default function DashboardPage() {
               Documentos Tributarios Electrónicos
             </h1>
             <p className="text-sm text-slate-500 mt-1">
-              Consulta, filtra y emite documentos en una ejecución aislada del laboratorio.
+              Consulta, filtra, emite, corrige y elimina documentos en una ejecución aislada del laboratorio.
             </p>
           </div>
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => setDialog({ kind: 'create' })}
             className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-5 py-3 rounded-xl shadow-md transition duration-150 text-sm shrink-0"
           >
             <PlusCircle className="w-5 h-5" />
@@ -198,8 +291,10 @@ export default function DashboardPage() {
           </div>
         </details>
 
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-4">
-          <form onSubmit={handleSearchSubmit} className="flex flex-1 w-full md:w-auto items-center gap-3">
+        <SummaryCards summary={summary} />
+
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col lg:flex-row items-center justify-between gap-4">
+          <form onSubmit={handleSearchSubmit} className="flex flex-1 w-full lg:w-auto items-center gap-3">
             <div className="relative flex-1">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
                 <Search className="w-4 h-4" />
@@ -208,8 +303,8 @@ export default function DashboardPage() {
                 type="text"
                 placeholder="Buscar por RUT Receptor (ej. 76.192.584-9)..."
                 aria-label="Buscar por RUT Receptor"
-                value={searchRut}
-                onChange={(event) => setSearchRut(event.target.value)}
+                value={rutInput}
+                onChange={(event) => setRutInput(event.target.value)}
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 text-slate-800"
               />
             </div>
@@ -221,14 +316,14 @@ export default function DashboardPage() {
             </button>
           </form>
 
-          <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+          <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-end">
             <div className="flex items-center gap-2 text-slate-600 text-sm font-medium">
               <Filter className="w-4 h-4 text-slate-400" />
               <label htmlFor="filter-tipo-dte" className="sr-only sm:not-sr-only">Tipo DTE:</label>
             </div>
             <select
               id="filter-tipo-dte"
-              value={selectedTipoDte}
+              value={filters.tipoDte}
               onChange={(event) => handleTipoDteChange(event.target.value)}
               className="bg-slate-50 border border-slate-300 text-slate-800 text-sm rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-600 font-medium"
             >
@@ -237,6 +332,20 @@ export default function DashboardPage() {
               <option value="DTE 34">DTE 34 - Factura Exenta</option>
               <option value="DTE 39">DTE 39 - Boleta Electrónica</option>
             </select>
+
+            <label htmlFor="filter-estado" className="sr-only sm:not-sr-only text-slate-600 text-sm font-medium">Estado:</label>
+            <select
+              id="filter-estado"
+              value={filters.estado}
+              onChange={(event) => handleEstadoChange(event.target.value)}
+              className="bg-slate-50 border border-slate-300 text-slate-800 text-sm rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-600 font-medium"
+            >
+              <option value="TODOS">Todos los estados</option>
+              <option value="ACEPTADO">Aceptado</option>
+              <option value="PENDIENTE">Pendiente</option>
+              <option value="RECHAZADO">Rechazado</option>
+            </select>
+
             <button
               onClick={handleResetFilters}
               aria-label="Recargar tabla"
@@ -248,9 +357,40 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {errorMessage && (
+        {notice && (
+          <div
+            role="status"
+            className={`p-4 rounded-xl text-sm flex items-start justify-between gap-3 border ${
+              notice.tone === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-amber-50 border-amber-200 text-amber-800'
+            }`}
+          >
+            <span className="flex items-start gap-2">
+              {notice.tone === 'success' ? <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" /> : <Info className="w-4 h-4 mt-0.5 shrink-0" />}
+              <span>{notice.text}</span>
+            </span>
+            <button onClick={() => setNotice(null)} aria-label="Cerrar mensaje" className="shrink-0 p-0.5 rounded hover:bg-black/5">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {actionError && (
+          <div role="alert" className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-sm flex items-start justify-between gap-3">
+            <span className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>{actionError}</span>
+            </span>
+            <button onClick={() => setActionError(null)} aria-label="Cerrar error" className="shrink-0 p-0.5 rounded hover:bg-black/5">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {errorText && (
           <div role="alert" className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-sm">
-            {errorMessage}
+            {errorText}
           </div>
         )}
 
@@ -273,7 +413,7 @@ export default function DashboardPage() {
           <div className="overflow-x-auto">
             {!isLoading && (
               <p aria-live="polite" className="px-6 pt-4 text-xs text-slate-500">
-                {documents.length} {documents.length === 1 ? 'documento encontrado' : 'documentos encontrados'}
+                {total} {total === 1 ? 'documento encontrado' : 'documentos encontrados'}
               </p>
             )}
             <table aria-label="Tabla de Documentos Tributarios" className="w-full text-left border-collapse">
@@ -297,71 +437,109 @@ export default function DashboardPage() {
                     </td>
                   </tr>
                 ) : (
-                  documents.map((document) => (
-                    <tr key={document.id} className="hover:bg-slate-50/80 transition duration-150">
-                      <td className="py-4 px-6 font-mono font-semibold text-slate-900">#{document.folio}</td>
-                      <td className="py-4 px-6">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-medium border border-blue-200">
-                          {document.tipoDte}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 font-mono text-slate-700">{document.rutReceptor}</td>
-                      <td className="py-4 px-6 font-semibold text-slate-900">$ {document.monto.toLocaleString('es-CL')} CLP</td>
-                      <td className="py-4 px-6 text-slate-500 text-xs">{document.fechaEmision}</td>
-                      <td className="py-4 px-6">
-                        {document.estado === 'ACEPTADO' ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
-                            <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> Aceptado
+                  documents.map((document) => {
+                    const isLocked = document.estado === 'ACEPTADO';
+                    const canSend = document.estado === 'PENDIENTE';
+                    const isSending = sendingId === document.id;
+
+                    return (
+                      <tr key={document.id} className="hover:bg-slate-50/80 transition duration-150">
+                        <td className="py-4 px-6 font-mono font-semibold text-slate-900">#{document.folio}</td>
+                        <td className="py-4 px-6">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-medium border border-blue-200">
+                            {document.tipoDte}
                           </span>
-                        ) : document.estado === 'PENDIENTE' ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
-                            <Clock className="w-3.5 h-3.5 text-amber-600" /> Pendiente
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">
-                            <XCircle className="w-3.5 h-3.5 text-red-600" /> Rechazado
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-4 px-6 text-center">
-                        <button
-                          onClick={() => setSelectedDocDetail(document)}
-                          aria-label={`Ver detalle de folio ${document.folio}`}
-                          className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
-                        >
-                          <Eye className="w-3.5 h-3.5" /> Ver detalle
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td className="py-4 px-6 font-mono text-slate-700">{document.rutReceptor}</td>
+                        <td className="py-4 px-6 font-semibold text-slate-900">$ {document.monto.toLocaleString('es-CL')} CLP</td>
+                        <td className="py-4 px-6 text-slate-500 text-xs">{document.fechaEmision}</td>
+                        <td className="py-4 px-6">
+                          <StatusBadge status={document.estado} />
+                        </td>
+                        <td className="py-4 px-6">
+                          <div className="flex flex-wrap items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => setDialog({ kind: 'detail', id: document.id })}
+                              aria-label={`Ver detalle de folio ${document.folio}`}
+                              className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> Ver detalle
+                            </button>
+                            <button
+                              onClick={() => setDialog({ kind: 'edit', id: document.id })}
+                              disabled={isLocked || isBusy}
+                              title={isLocked ? LOCKED_HINT : undefined}
+                              aria-label={`Editar folio ${document.folio}`}
+                              className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <Pencil className="w-3.5 h-3.5" /> Editar
+                            </button>
+                            <button
+                              onClick={() => handleSend(document)}
+                              disabled={!canSend || isBusy}
+                              title={!canSend ? SEND_HINT : undefined}
+                              aria-label={`Enviar al SII folio ${document.folio}`}
+                              className="inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              {isSending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                              {isSending ? 'Enviando...' : 'Enviar al SII'}
+                            </button>
+                            <button
+                              onClick={() => setDialog({ kind: 'delete', document })}
+                              disabled={isLocked || isBusy}
+                              title={isLocked ? LOCKED_HINT : undefined}
+                              aria-label={`Eliminar folio ${document.folio}`}
+                              className="inline-flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-700 px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Eliminar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
+
+          {total > 0 && (
+            <nav
+              aria-label="Paginación de documentos"
+              className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-4 border-t border-slate-200 text-sm text-slate-600"
+            >
+              <p>
+                Mostrando {rangeStart}–{rangeEnd} de {total} · Página {page} de {totalPages}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage((current) => current - 1)}
+                  disabled={page <= 1 || isLoading}
+                  className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 font-medium transition disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <ChevronLeft className="w-4 h-4" /> Anterior
+                </button>
+                <button
+                  onClick={() => setPage((current) => current + 1)}
+                  disabled={page >= totalPages || isLoading}
+                  className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 font-medium transition disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Siguiente <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </nav>
+          )}
         </div>
       </main>
 
-      {selectedDocDetail && (
-        <div role="dialog" aria-modal="true" aria-labelledby="detail-modal-title" className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 border border-slate-200">
-            <h2 id="detail-modal-title" className="text-lg font-bold text-slate-900">Detalle DTE - Folio #{selectedDocDetail.folio}</h2>
-            <div className="space-y-2 text-sm text-slate-600 bg-slate-50 p-4 rounded-xl">
-              <p><span className="font-semibold text-slate-800">Tipo:</span> {selectedDocDetail.tipoDte}</p>
-              <p><span className="font-semibold text-slate-800">RUT Receptor:</span> {selectedDocDetail.rutReceptor}</p>
-              <p><span className="font-semibold text-slate-800">Monto:</span> $ {selectedDocDetail.monto.toLocaleString('es-CL')} CLP</p>
-              <p><span className="font-semibold text-slate-800">Fecha Emisión:</span> {selectedDocDetail.fechaEmision}</p>
-              <p><span className="font-semibold text-slate-800">Canal:</span> {selectedDocDetail.deliveryChannel}</p>
-              {selectedDocDetail.attachmentName && <p><span className="font-semibold text-slate-800">Adjunto:</span> {selectedDocDetail.attachmentName}</p>}
-              {selectedDocDetail.observaciones && <p><span className="font-semibold text-slate-800">Observaciones:</span> {selectedDocDetail.observaciones}</p>}
-            </div>
-            <div className="flex justify-end">
-              <button onClick={() => setSelectedDocDetail(null)} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-slate-800 transition">Cerrar</button>
-            </div>
-          </div>
-        </div>
+      {dialog?.kind === 'create' && <DocumentFormModal onClose={() => setDialog(null)} onSaved={handleSaved} />}
+      {dialog?.kind === 'edit' && (
+        <DocumentFormModal documentId={dialog.id} onClose={() => setDialog(null)} onSaved={handleSaved} />
       )}
-
-      <NewDocumentModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onDocumentCreated={() => fetchDocuments(searchRut, selectedTipoDte)} />
+      {dialog?.kind === 'detail' && <DocumentDetailDialog documentId={dialog.id} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'delete' && (
+        <ConfirmDeleteDialog target={dialog.document} onClose={() => setDialog(null)} onDeleted={handleSaved} />
+      )}
     </div>
   );
 }

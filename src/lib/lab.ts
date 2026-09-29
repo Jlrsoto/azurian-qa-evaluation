@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { invalidRunId } from '@/lib/errors';
 
 const DEFAULT_MIN_DELAY = 300;
 const DEFAULT_MAX_DELAY = 3200;
@@ -24,6 +25,13 @@ export function getRequestId(): string {
 export function getRunId(request: Request): string | null {
   const runId = request.headers.get('x-lab-run-id')?.trim() || 'default';
   return RUN_ID_PATTERN.test(runId) ? runId : null;
+}
+
+/** Devuelve el runId de la petición o lanza 400 si el formato no es válido. */
+export function requireRunId(request: Request): string {
+  const runId = getRunId(request);
+  if (!runId) throw invalidRunId();
+  return runId;
 }
 
 export function applyLabHeaders(response: Response, delay: number, requestId: string): Response {

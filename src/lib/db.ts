@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -24,8 +24,9 @@ export function getDb(): Pool {
 
 export function ensureSchema(): Promise<void> {
   if (!globalThis.__qaEvaluationSchema) {
-    globalThis.__qaEvaluationSchema = (async () => {
-      await getDb().query(`
+    const schema = (async () => {
+      const db = getDb();
+      await db.query(`
         CREATE TABLE IF NOT EXISTS documents (
           id TEXT PRIMARY KEY,
           run_id VARCHAR(80) NOT NULL,
@@ -44,11 +45,39 @@ export function ensureSchema(): Promise<void> {
           CONSTRAINT documents_run_folio_unique UNIQUE (run_id, folio)
         );
       `);
-      await getDb().query(
-        'CREATE INDEX IF NOT EXISTS documents_run_rut_idx ON documents (run_id, rut_receptor);'
-      );
+      // Migración para volúmenes creados con versiones anteriores del laboratorio.
+      await db.query('ALTER TABLE documents ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();');
+      await db.query('CREATE INDEX IF NOT EXISTS documents_run_rut_idx ON documents (run_id, rut_receptor);');
+      // Una ejecución se siembra una sola vez: así un documento eliminado no reaparece.
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS lab_runs (
+          run_id VARCHAR(80) PRIMARY KEY,
+          seeded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
     })();
+
+    // Si falla (p. ej. la base aún no responde) no se cachea el error: el siguiente intento reintenta.
+    schema.catch(() => {
+      globalThis.__qaEvaluationSchema = undefined;
+    });
+    globalThis.__qaEvaluationSchema = schema;
   }
 
   return globalThis.__qaEvaluationSchema;
+}
+
+export async function withTransaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await getDb().connect();
+  try {
+    await client.query('BEGIN');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
